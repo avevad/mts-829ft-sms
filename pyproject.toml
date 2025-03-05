@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mts-829ft-sms"
+version = "0.1.0"
+description = "SMS client for MTS 829FT modems"
+authors = [{name = "Vadim Averin", email = "vadim@avevad.com"}]
+license = {text = "MIT"}
+dependencies = ["aiohttp", "xmltodict"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.scripts]
+mts-829ft-sms = "mts_829_ft_sms:main_loop_sync"
