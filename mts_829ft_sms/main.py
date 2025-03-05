@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import json
+import re
 from enum import Enum
 import os
 from typing import Optional
@@ -30,16 +31,28 @@ class SmsFormat(Enum):
 
         assert False, 'Unknown format'
 
-
 class SmsReceiver:
     _webhook_url: Optional[str]
     _sms_format: SmsFormat
+    _sender_regex: Optional[re.Pattern]
+    _content_regex: Optional[re.Pattern]
 
-    def __init__(self, webhook_url: Optional[str], sms_format: SmsFormat):
+    def __init__(
+            self, webhook_url: Optional[str], sms_format: SmsFormat,
+            sender_regex: Optional[str] = None, content_regex: Optional[str] = None
+    ):
         self._webhook_url = webhook_url or WEBHOOK_URL()
         self._sms_format = sms_format
+        self._sender_regex = re.compile(sender_regex, re.UNICODE) if sender_regex is not None else None
+        self._content_regex = re.compile(content_regex, re.UNICODE) if content_regex is not None else None
 
     async def handle_sms(self, sms: ModemAPI.Sms):
+        if self._sender_regex is not None and not self._sender_regex.search(sms.phone):
+            return
+
+        if self._content_regex is not None and not self._content_regex.search(sms.content):
+            return
+
         msg = self._sms_format.format_sms(sms)
 
         print(msg)
@@ -80,9 +93,10 @@ async def main_loop():
 
     parser_receive = sub.add_parser('receive', help='Continuously receive SMS messages')
     parser_receive.add_argument('--interval', '-i', type=float, default=1, help='Interval between checks (in seconds)')
-    parser_receive.add_argument('--format', '-f', type=SmsFormat, default=SmsFormat.PLAIN, choices=list(SmsFormat),
-                                help='Output format')
+    parser_receive.add_argument('--format', '-f', type=SmsFormat, default=SmsFormat.PLAIN, choices=list(SmsFormat), help='Output format')
     parser_receive.add_argument('--webhook', '-w', type=str, required=False, help='Webhook URL to send messages to')
+    parser_receive.add_argument('--content-regex', '-c', type=str, required=False, help='Regular expression to filter messages by content')
+    parser_receive.add_argument('--sender-regex', '-s', type=str, required=False, help='Regular expression to filter messages by sender')
 
     args = parser.parse_args()
 
@@ -90,5 +104,5 @@ async def main_loop():
         await api.authenticate()
 
         if args.action == 'receive':
-            receiver = SmsReceiver(args.webhook, args.format)
+            receiver = SmsReceiver(args.webhook, args.format, args.sender_regex, args.content_regex)
             await receive_loop(api, args.interval, receiver)
