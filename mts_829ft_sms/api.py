@@ -50,7 +50,7 @@ class ModemAPI:
 
     async def __aenter__(self) -> 'ModemAPI':
         self._client_session = await self._client_session.__aenter__()
-        async with self._client_session.get(self._webui_url):
+        async with self._client_session.get(self._webui_url + '/html/home.html'):
             pass
         return self
 

@@ -11,6 +11,7 @@ import aiohttp
 from mts_829ft_sms.api import ModemAPI
 
 WEBHOOK_URL = lambda: os.environ.get('MTS_829FT_WEBHOOK_URL', None)
+WEBHOOK_AUTH = lambda: os.environ.get('MTS_829FT_WEBHOOK_AUTH', None)
 
 
 class SmsFormat(Enum):
@@ -33,6 +34,7 @@ class SmsFormat(Enum):
 
 class SmsReceiver:
     _webhook_url: Optional[str]
+    _webhook_auth: Optional[str]
     _sms_format: SmsFormat
     _sender_regex: Optional[re.Pattern]
     _content_regex: Optional[re.Pattern]
@@ -42,6 +44,7 @@ class SmsReceiver:
             sender_regex: Optional[str] = None, content_regex: Optional[str] = None
     ):
         self._webhook_url = webhook_url or WEBHOOK_URL()
+        self._webhook_auth = WEBHOOK_AUTH()
         self._sms_format = sms_format
         self._sender_regex = re.compile(sender_regex, re.UNICODE) if sender_regex is not None else None
         self._content_regex = re.compile(content_regex, re.UNICODE) if content_regex is not None else None
@@ -58,11 +61,17 @@ class SmsReceiver:
         print(msg)
 
         if self._webhook_url is not None:
+            headers = {}
+            if self._webhook_auth is not None:
+                headers['Authorization'] = self._webhook_auth
+            if self._sms_format == SmsFormat.JSON:
+                headers['Content-Type'] = 'application/json'
             async with aiohttp.ClientSession() as session, session.post(
                     self._webhook_url,
-                    data=msg
-            ):
-                pass
+                    data=msg,
+                    headers=headers
+            ) as response:
+                print(await response.json())
 
 
 async def receive_loop(api: ModemAPI, interval: float, receiver: SmsReceiver):
