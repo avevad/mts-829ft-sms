@@ -28,7 +28,7 @@ class SmsFormat(Enum):
             )
 
         if self == self.JSON:
-            return json.dumps(sms.raw)
+            return json.dumps(sms.raw, ensure_ascii=False)
 
         assert False, 'Unknown format'
 
@@ -71,7 +71,7 @@ class SmsReceiver:
                     data=msg,
                     headers=headers
             ) as response:
-                print(await response.json())
+                pass
 
 
 async def receive_loop(api: ModemAPI, interval: float, receiver: SmsReceiver):
@@ -87,7 +87,8 @@ async def receive_loop(api: ModemAPI, interval: float, receiver: SmsReceiver):
 
         latest_count = count
 
-        await asyncio.sleep(interval) # for safety
+        await asyncio.sleep(2 * interval) # for safety
+        messages1 = await api.list_sms() # for safety
         messages = await api.list_sms()
 
         new_messages = [sms for sms in messages if (sms.index, sms.date) not in old_pairs]

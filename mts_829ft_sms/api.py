@@ -22,9 +22,19 @@ class ModemAPI:
 
     class ErrorCode(IntEnum):
         UNKNOWN = -1
-        UNAUTHORIZED = 125002
-        INVALID_METHOD = 100005
-        UNKNOWN_REQUEST = 100002
+        SYSTEM_NO_SUPPORT = 100002
+        SYSTEM_NO_RIGHTS = 100003
+        SYSTEM_BUSY = 100004
+        LOGIN_USERNAME_WRONG = 108001
+        LOGIN_PASSWORD_WRONG = 108002
+        LOGIN_ALREADY_LOGIN = 108003
+        LOGIN_USERNAME_PWD_WRONG = 108006
+        LOGIN_USERNAME_PWD_OVERRUN = 108007
+        LOGIN_TOUCH_ALREADY_LOGIN = 108009
+        VOICE_BUSY = 120001
+        WRONG_TOKEN = 125001
+        WRONG_SESSION = 125002
+        WRONG_SESSION_TOKEN = 125003
 
     class Error(Exception):
         def __init__(self, code: int, message: str):
