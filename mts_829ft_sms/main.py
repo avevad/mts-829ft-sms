@@ -79,21 +79,21 @@ async def receive_loop(api: ModemAPI, interval: float, receiver: SmsReceiver):
     old_pairs = set([(sms.index, sms.date) for sms in (await api.list_sms())])
 
     while True:
+        await asyncio.sleep(interval)
         count = await api.count_sms()
 
         if count.local_inbox <= latest_count.local_inbox:
             continue
 
-        await asyncio.sleep(interval)
-
         latest_count = count
+
+        await asyncio.sleep(interval) # for safety
         messages = await api.list_sms()
+
         new_messages = [sms for sms in messages if (sms.index, sms.date) not in old_pairs]
         for sms in new_messages:
             await receiver.handle_sms(sms)
             old_pairs.add((sms.index, sms.date))
-
-        await asyncio.sleep(interval)
 
 
 async def main_loop():
