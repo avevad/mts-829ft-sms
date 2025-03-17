@@ -149,3 +149,11 @@ class ModemAPI:
             headers={'__RequestVerificationToken': token}
         )
         return self.SmsCount.from_raw(res['response'])
+
+    async def delete_sms(self, sms: [Sms]):
+        token = await self.get_onetime_token()
+        await self._do_xml_request(
+            'post', '/api/sms/delete-sms',
+            data={'request': {'Index': [sms.index for sms in sms]}},
+            headers={'__RequestVerificationToken': token}
+        )

@@ -2,19 +2,16 @@ import argparse
 import asyncio
 import json
 import re
-from enum import Enum
-import os
-from typing import Optional
+from enum import StrEnum
+from typing import Optional, Callable, Coroutine
 
 import aiohttp
+import yaml
 
 from mts_829ft_sms.api import ModemAPI
 
-WEBHOOK_URL = lambda: os.environ.get('MTS_829FT_WEBHOOK_URL', None)
-WEBHOOK_AUTH = lambda: os.environ.get('MTS_829FT_WEBHOOK_AUTH', None)
 
-
-class SmsFormat(Enum):
+class SmsFormat(StrEnum):
     PLAIN = 'plain'
     JSON = 'json'
 
@@ -32,49 +29,84 @@ class SmsFormat(Enum):
 
         assert False, 'Unknown format'
 
-class SmsReceiver:
-    _webhook_url: Optional[str]
-    _webhook_auth: Optional[str]
-    _sms_format: SmsFormat
-    _sender_regex: Optional[re.Pattern]
-    _content_regex: Optional[re.Pattern]
 
-    def __init__(
-            self, webhook_url: Optional[str], sms_format: SmsFormat,
-            sender_regex: Optional[str] = None, content_regex: Optional[str] = None
-    ):
-        self._webhook_url = webhook_url or WEBHOOK_URL()
-        self._webhook_auth = WEBHOOK_AUTH()
-        self._sms_format = sms_format
-        self._sender_regex = re.compile(sender_regex, re.UNICODE) if sender_regex is not None else None
-        self._content_regex = re.compile(content_regex, re.UNICODE) if content_regex is not None else None
+class SmsReceiver:
+    _receivers: list[(Callable[[ModemAPI.Sms], bool], list[Callable[[ModemAPI.Sms], Coroutine[None, None, None]]])]
+
+    def __init__(self, receivers: list[
+        (Callable[[ModemAPI.Sms], bool], list[Callable[[ModemAPI.Sms], Coroutine[None, None, None]]])]):
+        self._receivers = receivers
 
     async def handle_sms(self, sms: ModemAPI.Sms):
-        if self._sender_regex is not None and not self._sender_regex.search(sms.phone):
-            return
+        for pred, receivers in self._receivers:
+            if pred(sms):
+                for receiver in receivers:
+                    await receiver(sms)
+                break
 
-        if self._content_regex is not None and not self._content_regex.search(sms.content):
-            return
+    @staticmethod
+    def pred_from_config(from_regex: Optional[str], content_regex: Optional[str]):
+        def pred(sms: ModemAPI.Sms) -> bool:
+            if from_regex is not None and not re.search(re.compile(from_regex, re.UNICODE), sms.phone):
+                return False
 
-        msg = self._sms_format.format_sms(sms)
+            if content_regex is not None and not re.search(re.compile(content_regex, re.UNICODE), sms.content):
+                return False
 
-        print(msg)
+            return True
 
-        if self._webhook_url is not None:
-            headers = {}
-            if self._webhook_auth is not None:
-                headers['Authorization'] = self._webhook_auth
-            if self._sms_format == SmsFormat.JSON:
-                headers['Content-Type'] = 'application/json'
+        return pred
+
+    @staticmethod
+    def stdout_handler_from_config(stdout_dict: dict):
+        async def handler(sms: ModemAPI.Sms):
+            print(SmsFormat(stdout_dict.get('format', SmsFormat.PLAIN)).format_sms(sms))
+
+        return handler
+
+    @staticmethod
+    def webhook_handler_from_config(webhook_dict: dict):
+        headers = {}
+        if webhook_dict.get('auth', None) is not None:
+            headers['Authorization'] = webhook_dict['auth']
+        if webhook_dict.get('format', SmsFormat.PLAIN) == SmsFormat.JSON:
+            headers['Content-Type'] = 'application/json'
+
+        async def handler(sms: ModemAPI.Sms):
             async with aiohttp.ClientSession() as session, session.post(
-                    self._webhook_url,
-                    data=msg,
+                    webhook_dict['url'],
+                    data=SmsFormat(webhook_dict['format']).format_sms(sms),
                     headers=headers
             ) as response:
                 pass
 
+        return handler
 
-async def receive_loop(api: ModemAPI, interval: float, receiver: SmsReceiver):
+    @staticmethod
+    def handlers_from_config(to_dict: dict) -> list[Callable[[ModemAPI.Sms], Coroutine[None, None, None]]]:
+        handlers = []
+
+        if to_dict.get('stdout', None) is not None:
+            handlers.append(SmsReceiver.stdout_handler_from_config(to_dict['stdout']))
+
+        if to_dict.get('webhooks', None) is not None:
+            handlers.extend([SmsReceiver.webhook_handler_from_config(webhook) for webhook in to_dict['webhooks']])
+
+        return handlers
+
+    @staticmethod
+    def from_config(config: list[dict]):
+        receivers = []
+
+        for receiver in config:
+            pred = SmsReceiver.pred_from_config(receiver.get('from', None), receiver.get('content', None))
+            handlers = SmsReceiver.handlers_from_config(receiver['to'])
+            receivers.append((pred, handlers))
+
+        return SmsReceiver(receivers)
+
+
+async def receive_loop(api: ModemAPI, interval: float, receiver: SmsReceiver, delete: bool):
     latest_count = await api.count_sms()
     old_pairs = set([(sms.index, sms.date) for sms in (await api.list_sms())])
 
@@ -87,14 +119,18 @@ async def receive_loop(api: ModemAPI, interval: float, receiver: SmsReceiver):
 
         latest_count = count
 
-        await asyncio.sleep(2 * interval) # for safety
-        messages1 = await api.list_sms() # for safety
+        await asyncio.sleep(2 * interval)  # for safety
+        messages1 = await api.list_sms()  # for safety
         messages = await api.list_sms()
 
         new_messages = [sms for sms in messages if (sms.index, sms.date) not in old_pairs]
         for sms in new_messages:
             await receiver.handle_sms(sms)
             old_pairs.add((sms.index, sms.date))
+
+        if delete:
+            await api.delete_sms(new_messages)
+            latest_count.local_inbox -= len(new_messages)
 
 
 async def main_loop():
@@ -103,10 +139,8 @@ async def main_loop():
 
     parser_receive = sub.add_parser('receive', help='Continuously receive SMS messages')
     parser_receive.add_argument('--interval', '-i', type=float, default=1, help='Interval between checks (in seconds)')
-    parser_receive.add_argument('--format', '-f', type=SmsFormat, default=SmsFormat.PLAIN, choices=list(SmsFormat), help='Output format')
-    parser_receive.add_argument('--webhook', '-w', type=str, required=False, help='Webhook URL to send messages to')
-    parser_receive.add_argument('--content-regex', '-c', type=str, required=False, help='Regular expression to filter messages by content')
-    parser_receive.add_argument('--sender-regex', '-s', type=str, required=False, help='Regular expression to filter messages by sender')
+    parser_receive.add_argument('--config', '-c', type=str, default='config.yaml', help='Config file')
+    parser_receive.add_argument('--delete', '-d', action='store_true', help='Delete messages after receiving')
 
     args = parser.parse_args()
 
@@ -114,5 +148,7 @@ async def main_loop():
         await api.authenticate()
 
         if args.action == 'receive':
-            receiver = SmsReceiver(args.webhook, args.format, args.sender_regex, args.content_regex)
-            await receive_loop(api, args.interval, receiver)
+            with open(args.config) as f:
+                config = yaml.safe_load(f)
+            receiver = SmsReceiver.from_config(config)
+            await receive_loop(api, args.interval, receiver, args.delete)
