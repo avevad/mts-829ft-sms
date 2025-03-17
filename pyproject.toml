@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mts-829ft-sms"
-version = "0.1.0"
+version = "0.2.0"
 description = "SMS client for MTS 829FT modems"
 authors = [{name = "Vadim Averin", email = "vadim@avevad.com"}]
 license = {text = "MIT"}
